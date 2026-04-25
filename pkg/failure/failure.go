@@ -29,8 +29,8 @@ func init() {
 }
 
 // NewSeedSource creates a deterministic rand.Source from a seed.
-func NewSeedSource(seed int64) rand.Source64 {
-	return rand.NewSource(seed)
+func NewSeedSource(seed int64) *rand.Rand {
+	return rand.New(rand.NewSource(seed))
 }
 
 // ── Process Kill ───────────────────────────────────────────────────────────────
@@ -93,9 +93,10 @@ func (wc *WALCorruptor) CorruptAt(callCount int64) { wc.corruptAt = callCount }
 
 // CorruptFile corrupts the WAL file at path based on the configured mode.
 // Returns the path to the corrupted file.
+// Corruption triggers when call count EXCEEDS corruptAt (for fail-at-N semantics).
 func (wc *WALCorruptor) CorruptFile(path string) (string, error) {
 	n := atomic.AddInt64(&wc.count, 1)
-	if n != wc.corruptAt {
+	if n <= wc.corruptAt {
 		return path, nil
 	}
 
@@ -119,7 +120,6 @@ func (wc *WALCorruptor) CorruptFile(path string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		// Write a partial record (half of a valid entry)
 		partial := make([]byte, 16)
 		binary.LittleEndian.PutUint64(partial, 0xAAAAAAAAAAAAAAAA)
 		f.Write(partial[:8])
@@ -134,7 +134,6 @@ func (wc *WALCorruptor) CorruptFile(path string) (string, error) {
 		if len(data) < 64 {
 			return "", fmt.Errorf("file too short for bit flip")
 		}
-		// Flip bit 5 in byte 32 (middle of first record)
 		data[32] ^= (1 << 5)
 		out := path + ".corrupt"
 		if err := os.WriteFile(out, data, 0644); err != nil {
